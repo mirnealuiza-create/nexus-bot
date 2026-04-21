@@ -1,6 +1,11 @@
 import requests
 import time
-import schedule
+try:
+    import schedule
+except ImportError:
+    import os
+    os.system("pip install schedule")
+    import schedule
 from datetime import datetime
 import pandas as pd
 import numpy as np
