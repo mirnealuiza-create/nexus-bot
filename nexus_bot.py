@@ -128,10 +128,10 @@ def analyze(symbol):
     short_score = sum(short_conditions)
 
     # Necesită minim 4 din 6 condiții
-    if long_score >= 4:
+    if long_score >= 3:
         direction  = "LONG"
         score      = long_score
-    elif short_score >= 4:
+    elif short_score >= 3:
         direction  = "SHORT"
         score      = short_score
     else:
