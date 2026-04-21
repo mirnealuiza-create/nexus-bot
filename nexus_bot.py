@@ -102,7 +102,7 @@ def analyze(symbol):
     vol_avg       = volume.iloc[-20:].mean()
 
     # Confirmare volum
-    vol_ok = vol_now > (vol_avg * MIN_VOLUME_FACTOR)
+    vol_ok = True
 
     # ---- SEMNAL LONG ----
     long_conditions = [
