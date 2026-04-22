@@ -6,7 +6,7 @@ from datetime import datetime
 TELEGRAM_BOT_TOKEN = "8671954962:AAGY7YKVfnRJCBaW2lYZpMPWVOoFhX7fRs4"
 TELEGRAM_CHAT_ID   = "7814466236"
 
-SYMBOLS  = ["BTCUSDT", "ETHUSDT", "SOLUSDT", "XRPUSDT", "LTCUSDT"]
+SYMBOLS = ["BTCUSDT", "ETHUSDT", "SOLUSDT", "XRPUSDT", "LTCUSDT", "CHZUSDT"]
 INTERVAL = "15m"
 
 def get_klines(symbol, interval="15m", limit=250):
