@@ -14,10 +14,12 @@ def get_klines(symbol, interval="15m", limit=250):
         url = "https://api.binance.com/api/v3/klines"
         r = requests.get(url, params={"symbol": symbol, "interval": interval, "limit": limit}, timeout=10)
         data = r.json()
-        closes  = [float(c[4]) for c in data]
-        highs   = [float(c[2]) for c in data]
-        lows    = [float(c[3]) for c in data]
-        volumes = [float(c[5]) for c in data]
+        if not isinstance(data, list) or len(data) < 50:
+            return None, None, None, None
+        closes  = [float(c[4]) for c in data if len(c) > 5]
+        highs   = [float(c[2]) for c in data if len(c) > 5]
+        lows    = [float(c[3]) for c in data if len(c) > 5]
+        volumes = [float(c[5]) for c in data if len(c) > 5]
         return closes, highs, lows, volumes
     except Exception as e:
         print(f"  Eroare date {symbol}: {e}")
