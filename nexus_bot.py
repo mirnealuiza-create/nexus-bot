@@ -67,16 +67,18 @@ def analyze(symbol):
     atr_vals = [highs[i] - lows[i] for i in range(-14, 0)]
     atr      = sum(atr_vals) / 14
 
-    long_cond  = [rsi < 38, rsi > rsi_prev, price > ema200, ema9 > ema21, macd > 0 and macd_prev <= 0, vol_ok]
-    short_cond = [rsi > 62, rsi < rsi_prev, price < ema200, ema9 < ema21, macd < 0 and macd_prev >= 0, vol_ok]
+   long_cond  = [rsi < 38, rsi > rsi_prev, macd > macd_prev]
+short_cond = [rsi > 62, rsi < rsi_prev, macd < macd_prev]
 
-    ls = sum(long_cond)
-    ss = sum(short_cond)
+ls = sum(long_cond)
+ss = sum(short_cond)
 
-    if ls >= 4:
-        direction, score = "LONG", ls
-    elif ss >= 4:
-        direction, score = "SHORT", ss
+trend = "↑ peste EMA200" if price > ema200 else "↓ sub EMA200"
+
+if ls >= 2:
+    direction, score = "LONG", ls
+elif ss >= 2:
+    direction, score = "SHORT", ss
     else:
         return None
 
