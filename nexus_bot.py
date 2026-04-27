@@ -10,7 +10,7 @@ INTERVAL = "15m"
 
 def get_klines(symbol):
     try:
-        r = requests.get("https://api.binance.com/api/v3/klines",
+       r = requests.get("https://api.binance.us/api/v3/klines",
             params={"symbol": symbol, "interval": INTERVAL, "limit": 100}, timeout=10)
         data = r.json()
         if not isinstance(data, list) or len(data) < 30:
