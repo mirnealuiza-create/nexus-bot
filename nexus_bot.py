@@ -5,7 +5,7 @@ from datetime import datetime
 
 TELEGRAM_BOT_TOKEN = "8671954962:AAGY7YKVfnRJCBaW2lYZpMPWVOoFhX7fRs4"
 TELEGRAM_CHAT_ID = "7814466236"
-SYMBOLS = ["BTCUSDT", "ETHUSDT", "SOLUSDT", "XRPUSDT", "LTCUSDT", "CHZUSDT", "ADAUSDT"]
+SYMBOLS = ["BTCUSDT", "ETHUSDT", "SOLUSDT", "XRPUSDT", "LTCUSDT", "ADAUSDT"]
 INTERVAL = "15m"
 
 def get_klines(symbol):
@@ -49,6 +49,14 @@ def send_telegram(msg):
     except Exception as e:
         print(f"Eroare telegram: {e}")
 
+def fmt(price):
+    if price > 100:
+        return f"${price:,.2f}"
+    elif price > 1:
+        return f"${price:.4f}"
+    else:
+        return f"${price:.5f}"
+
 def scan():
     print(f"\nScanare {datetime.now().strftime('%H:%M:%S')}")
     for sym in SYMBOLS:
@@ -70,7 +78,8 @@ def scan():
         e26p = calc_ema(closes[:-1], 26)
         macdp = e12p - e26p
         ema200 = calc_ema(closes, min(200, len(closes)-1))
-        trend = "peste EMA200" if price > ema200 else "sub EMA200"
+        trend = "✅ peste EMA200" if price > ema200 else "⚠️ sub EMA200"
+
         if r1 < 40 and r1 > r2 and macd > macdp:
             sig = "LONG"
         elif r1 > 60 and r1 < r2 and macd < macdp:
@@ -78,19 +87,40 @@ def scan():
         else:
             print(f"fara semnal (RSI:{r1:.1f})")
             continue
-        atr = sum([highs[i]-lows[i] for i in range(-14, 0)]) / 14
+
+        # ATR bazat pe ultimele 14 lumânări - minim 0.3% din pret
+        atr_raw = sum([highs[i]-lows[i] for i in range(-14, 0)]) / 14
+        atr = max(atr_raw, price * 0.003)
+
         if sig == "LONG":
-            sl = round(price - atr * 1.5, 6)
-            tp = round(price + atr * 3, 6)
+            sl = round(price - atr * 2, 6)
+            tp1 = round(price + atr * 2, 6)
+            tp2 = round(price + atr * 4, 6)
+            risk_pct = round((price - sl) / price * 100, 2)
+            reward_pct = round((tp1 - price) / price * 100, 2)
         else:
-            sl = round(price + atr * 1.5, 6)
-            tp = round(price - atr * 3, 6)
+            sl = round(price + atr * 2, 6)
+            tp1 = round(price - atr * 2, 6)
+            tp2 = round(price - atr * 4, 6)
+            risk_pct = round((sl - price) / price * 100, 2)
+            reward_pct = round((price - tp1) / price * 100, 2)
+
+        rr = round(reward_pct / risk_pct, 1) if risk_pct > 0 else 0
+
         print(f"{sig}! RSI:{r1:.1f}")
         e = "🟢" if sig == "LONG" else "🔴"
-        msg = f"{e} *{sig} — {sym}*\n"
-        msg += f"💰 Pret: `${price:.5f}` | {trend}\n"
-        msg += f"🎯 Stop: `${sl:.5f}` | Target: `${tp:.5f}`\n"
-        msg += f"📊 RSI: `{r1:.1f}` | {datetime.now().strftime('%H:%M %d.%m')}\n"
+        arrow = "⬆️" if sig == "LONG" else "⬇️"
+
+        msg = f"{e} *{sig} — {sym}* {arrow}\n"
+        msg += f"━━━━━━━━━━━━━━━━\n"
+        msg += f"💰 *Entry:* {fmt(price)}\n"
+        msg += f"🛑 *Stop Loss:* {fmt(sl)} (-{risk_pct}%)\n"
+        msg += f"🎯 *Take Profit 1:* {fmt(tp1)} (+{reward_pct}%)\n"
+        msg += f"🎯 *Take Profit 2:* {fmt(tp2)} (+{round(reward_pct*2, 2)}%)\n"
+        msg += f"━━━━━━━━━━━━━━━━\n"
+        msg += f"📊 RSI: `{r1:.1f}` | R/R: 1:{rr}\n"
+        msg += f"📈 Trend: {trend}\n"
+        msg += f"🕐 {datetime.now().strftime('%H:%M %d.%m.%Y')}\n"
         msg += f"_Tool educational. Nu e sfat financiar._"
         send_telegram(msg)
         time.sleep(1)
