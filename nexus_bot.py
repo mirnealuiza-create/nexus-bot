@@ -104,12 +104,12 @@ def analyze(symbol, btc_trend):
 
     # LONG conditions
     long_15m = rsi15 < 40 and rsi15 > rsi15_prev and macd15 > macd15_prev
-    long_1h = rsi1h < 55 and macd1h > 0
+    long_1h = rsi1h < 65
     long_btc = btc_trend in ["BULL", "NEUTRAL"]
 
     # SHORT conditions  
     short_15m = rsi15 > 60 and rsi15 < rsi15_prev and macd15 < macd15_prev
-    short_1h = rsi1h > 45 and macd1h < 0
+    short_1h = rsi1h > 35
     short_btc = btc_trend in ["BEAR", "NEUTRAL"]
 
     if long_15m and long_1h and long_btc:
