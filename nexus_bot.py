@@ -3,7 +3,8 @@ import time
 import schedule
 from datetime import datetime
 
-TELEGRAM_BOT_TOKEN = "8669900083:AAGyX0jlIrbf6Xa0HJuTFq5vN0XUpVMt8UU"
+import os
+TELEGRAM_BOT_TOKEN = os.environ.get("TELEGRAM_BOT_TOKEN", "")
 TELEGRAM_CHAT_ID = "7814466236"
 SYMBOLS = ["BTCUSDT", "ETHUSDT", "SOLUSDT", "XRPUSDT", "LTCUSDT", "ADAUSDT"]
 INTERVAL_FAST = "15m"
