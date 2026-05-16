@@ -4,8 +4,8 @@ import schedule
 from datetime import datetime
 import os
 
-TELEGRAM_BOT_TOKEN = os.environ.get("TELEGRAM_BOT_TOKEN", "")
-TELEGRAM_CHAT_ID = os.environ.get("TELEGRAM_CHAT_ID", "")
+TELEGRAM_BOT_TOKEN = os.environ.get("TELEGRAM_BOT_TOKEN", "8645611123:AAGPfVYCjGmoghAfMWWrUz2WoikpwRcsUwk")
+TELEGRAM_CHAT_ID = os.environ.get("TELEGRAM_CHAT_ID", "7814466236")
 SYMBOLS = ["BTCUSDT", "ETHUSDT", "SOLUSDT", "XRPUSDT", "LTCUSDT", "ADAUSDT"]
 INTERVAL_FAST = "15m"
 INTERVAL_SLOW = "1h"
@@ -147,9 +147,9 @@ def analyze(symbol, btc_trend):
     short_score = sum([short_rsi15, short_ema200, short_ema_cross, short_macd15, short_rsi1h, short_ema200_1h, short_btc, short_vol])
 
     # Necesita minim 6 din 8 conditii
-    if long_score >= 6:
+    if long_score >= 5:
         sig, score = "LONG", long_score
-    elif short_score >= 5:
+    elif short_score >= 4:
         sig, score = "SHORT", short_score
     else:
         return None
@@ -159,7 +159,7 @@ def analyze(symbol, btc_trend):
     now = datetime.now()
     if key in last_signals:
         diff = (now - last_signals[key]).total_seconds() / 60
-        if diff < 90:
+        if diff < 60:
             print(f"duplicat ignorat ({diff:.0f} min)")
             return None
     last_signals[key] = now
