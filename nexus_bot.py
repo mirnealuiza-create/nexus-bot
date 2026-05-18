@@ -3,6 +3,7 @@ import time
 import schedule
 from datetime import datetime
 import os
+
 TELEGRAM_BOT_TOKEN = os.environ.get("TELEGRAM_BOT_TOKEN", "")
 TELEGRAM_CHAT_ID = os.environ.get("TELEGRAM_CHAT_ID", "")
 SYMBOLS = ["BTCUSDT", "ETHUSDT", "SOLUSDT", "XRPUSDT", "LTCUSDT", "ADAUSDT"]
@@ -18,11 +19,12 @@ def get_klines(symbol, interval, limit=150):
         data = r.json()
         if not isinstance(data, list) or len(data) < 50:
             return None
-        closes  = [float(c[4]) for c in data]
-        highs   = [float(c[2]) for c in data]
-        lows    = [float(c[3]) for c in data]
-        volumes = [float(c[5]) for c in data]
-        return {"closes": closes, "highs": highs, "lows": lows, "volumes": volumes}
+        return {
+            "closes":  [float(c[4]) for c in data],
+            "highs":   [float(c[2]) for c in data],
+            "lows":    [float(c[3]) for c in data],
+            "volumes": [float(c[5]) for c in data],
+        }
     except Exception as e:
         print(f"eroare date: {e}")
         return None
@@ -81,76 +83,81 @@ def analyze(symbol, btc_trend):
     rsi15_prev = calc_rsi(closes15[:-1])
     ema9       = calc_ema(closes15, 9)
     ema21      = calc_ema(closes15, 21)
-    ema200     = calc_ema(closes15, min(200, len(closes15)-1))
+    ema200_15  = calc_ema(closes15, min(200, len(closes15)-1))
     e12        = calc_ema(closes15, 12)
     e26        = calc_ema(closes15, 26)
     macd15     = e12 - e26
     macd15p    = calc_ema(closes15[:-1], 12) - calc_ema(closes15[:-1], 26)
 
     # Indicatori 1h
-    rsi1h   = calc_rsi(closes1h)
-    e12_1h  = calc_ema(closes1h, 12)
-    e26_1h  = calc_ema(closes1h, 26)
-    macd1h  = e12_1h - e26_1h
-    ema200_1h = calc_ema(closes1h, min(200, len(closes1h)-1))
+    rsi1h      = calc_rsi(closes1h)
+    rsi1h_prev = calc_rsi(closes1h[:-1])
+    e12_1h     = calc_ema(closes1h, 12)
+    e26_1h     = calc_ema(closes1h, 26)
+    macd1h     = e12_1h - e26_1h
+    macd1h_prev = calc_ema(closes1h[:-1], 12) - calc_ema(closes1h[:-1], 26)
+    ema200_1h  = calc_ema(closes1h, min(200, len(closes1h)-1))
 
-    # Volum
+    # Volum — confirmare obligatorie
     vol_avg = sum(volumes[-20:]) / 20
-    vol_ok  = volumes[-1] > vol_avg * 1.2
-
-    # Trend ultim 3 lumânări
-    last3_bull = all(closes15[-i] > closes15[-i-1] for i in range(1, 4))
-    last3_bear = all(closes15[-i] < closes15[-i-1] for i in range(1, 4))
+    vol_ok  = volumes[-1] > vol_avg * 1.3
 
     # ATR
     atr_raw = sum([highs[i]-lows[i] for i in range(-14, 0)]) / 14
     atr     = max(atr_raw, price * 0.004)
 
-    # ============ CONDITII LONG ============
-    # 1. RSI 15m sub 35 si in crestere
-    long_rsi15 = rsi15 < 35 and rsi15 > rsi15_prev
-    # 2. Pret PESTE EMA 200 pe 15m (trend bullish)
-    long_ema200 = price > ema200
-    # 3. EMA 9 peste EMA 21 pe 15m
-    long_ema_cross = ema9 > ema21
-    # 4. MACD bullish pe 15m
-    long_macd15 = macd15 > macd15p
-    # 5. RSI 1h sub 60 (nu overbought pe termen lung)
-    long_rsi1h = rsi1h < 60
-    # 6. Pret peste EMA 200 pe 1h
-    long_ema200_1h = price > ema200_1h
-    # 7. BTC nu e in cadere
-    long_btc = btc_trend in ["BULL", "NEUTRAL"]
-    # 8. Volum ok
-    long_vol = vol_ok
+    # ===== CONDITII LONG (stricte) =====
+    long_cond = [
+        rsi15 < 32,                          # RSI 15m oversold strict
+        rsi15 > rsi15_prev,                  # RSI 15m in crestere
+        rsi1h < 50,                          # RSI 1h nu e overbought
+        rsi1h > rsi1h_prev,                  # RSI 1h in crestere
+        price > ema200_15,                   # Pret peste EMA200 pe 15m
+        price > ema200_1h,                   # Pret peste EMA200 pe 1h
+        macd15 > macd15p,                    # MACD bullish pe 15m
+        btc_trend == "BULL",                 # BTC in crestere
+    ]
 
-    # ============ CONDITII SHORT ============
-    # 1. RSI 15m peste 65 si in scadere
-    short_rsi15 = rsi15 > 65 and rsi15 < rsi15_prev
-    # 2. Pret SUB EMA 200 pe 15m (trend bearish)
-    short_ema200 = price < ema200
-    # 3. EMA 9 sub EMA 21 pe 15m
-    short_ema_cross = ema9 < ema21
-    # 4. MACD bearish pe 15m
-    short_macd15 = macd15 < macd15p
-    # 5. RSI 1h peste 40 (nu oversold pe termen lung)
-    short_rsi1h = rsi1h > 40
-    # 6. Pret sub EMA 200 pe 1h
-    short_ema200_1h = price < ema200_1h
-    # 7. BTC nu e in crestere
-    short_btc = btc_trend in ["BEAR", "NEUTRAL"]
-    # 8. Volum ok
-    short_vol = vol_ok
+    # ===== CONDITII SHORT (stricte) =====
+    short_cond = [
+        rsi15 > 68,                          # RSI 15m overbought strict
+        rsi15 < rsi15_prev,                  # RSI 15m in scadere
+        rsi1h > 50,                          # RSI 1h nu e oversold
+        rsi1h < rsi1h_prev,                  # RSI 1h in scadere
+        price < ema200_15,                   # Pret sub EMA200 pe 15m
+        price < ema200_1h,                   # Pret sub EMA200 pe 1h
+        macd15 < macd15p,                    # MACD bearish pe 15m
+        btc_trend == "BEAR",                 # BTC in scadere
+    ]
 
-    long_score  = sum([long_rsi15, long_ema200, long_ema_cross, long_macd15, long_rsi1h, long_ema200_1h, long_btc, long_vol])
-    short_score = sum([short_rsi15, short_ema200, short_ema_cross, short_macd15, short_rsi1h, short_ema200_1h, short_btc, short_vol])
+    long_score  = sum(long_cond)
+    short_score = sum(short_cond)
 
-    # Necesita minim 6 din 8 conditii
-    if long_score >= 5:
+    # Necesita MINIM 6/8 conditii
+    if long_score >= 6 and vol_ok:
         sig, score = "LONG", long_score
-    elif short_score >= 4:
+    elif short_score >= 6 and vol_ok:
         sig, score = "SHORT", short_score
     else:
+        return None
+
+    # Calcul SL/TP cu R/R minim 1:1.5
+    if sig == "LONG":
+        sl  = round(price - atr * 2, 6)
+        tp1 = round(price + atr * 3, 6)   # R/R 1:1.5
+        tp2 = round(price + atr * 5, 6)   # R/R 1:2.5
+    else:
+        sl  = round(price + atr * 2, 6)
+        tp1 = round(price - atr * 3, 6)
+        tp2 = round(price - atr * 5, 6)
+
+    risk   = round(abs(price - sl) / price * 100, 2)
+    reward = round(abs(tp1 - price) / price * 100, 2)
+    rr     = round(reward / risk, 1) if risk > 0 else 0
+
+    # Verificare R/R minim 1:1.5
+    if rr < 1.4:
+        print(f"R/R insuficient ({rr}) — semnal ignorat")
         return None
 
     # Anti-duplicat 90 minute
@@ -158,25 +165,13 @@ def analyze(symbol, btc_trend):
     now = datetime.now()
     if key in last_signals:
         diff = (now - last_signals[key]).total_seconds() / 60
-        if diff < 60:
+        if diff < 90:
             print(f"duplicat ignorat ({diff:.0f} min)")
             return None
     last_signals[key] = now
 
-    if sig == "LONG":
-        sl  = round(price - atr * 2, 6)
-        tp1 = round(price + atr * 2, 6)
-        tp2 = round(price + atr * 4, 6)
-    else:
-        sl  = round(price + atr * 2, 6)
-        tp1 = round(price - atr * 2, 6)
-        tp2 = round(price - atr * 4, 6)
-
-    risk   = round(abs(price - sl) / price * 100, 2)
-    reward = round(abs(tp1 - price) / price * 100, 2)
-    rr     = round(reward / risk, 1) if risk > 0 else 0
-    conf   = min(95, 50 + score * 6)
-    trend  = "✅ peste EMA200" if price > ema200 else "⚠️ sub EMA200"
+    conf  = min(95, 50 + score * 7)
+    trend = "✅ peste EMA200" if price > ema200_15 else "⚠️ sub EMA200"
 
     return {
         "symbol": symbol, "direction": sig, "price": price,
@@ -198,7 +193,7 @@ def fmt(p):
 
 def send_telegram(msg):
     try:
-        url  = f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/sendMessage"
+        url = f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/sendMessage"
         r = requests.post(url, data={"chat_id": TELEGRAM_CHAT_ID, "text": msg, "parse_mode": "Markdown"}, timeout=10)
         print(f"Telegram: {'OK' if r.status_code==200 else r.text}")
     except Exception as e:
@@ -217,19 +212,19 @@ def scan():
         if sig:
             e     = "🟢" if sig["direction"]=="LONG" else "🔴"
             arrow = "⬆️" if sig["direction"]=="LONG" else "⬇️"
-            print(f"{sig['direction']}! ({sig['score']}/8) RSI15:{sig['rsi15']} RSI1h:{sig['rsi1h']}")
+            print(f"{sig['direction']}! ({sig['score']}/8) RSI15:{sig['rsi15']} RSI1h:{sig['rsi1h']} RR:{sig['rr']}")
 
             msg  = f"{e} *{sig['direction']} — {sig['symbol']}* {arrow}\n"
             msg += f"━━━━━━━━━━━━━━━━\n"
             msg += f"💰 *Entry:* {fmt(sig['price'])}\n"
             msg += f"🛑 *Stop Loss:* {fmt(sig['sl'])} (-{sig['risk']}%)\n"
             msg += f"🎯 *Take Profit 1:* {fmt(sig['tp1'])} (+{sig['reward']}%)\n"
-            msg += f"🎯 *Take Profit 2:* {fmt(sig['tp2'])} (+{round(sig['reward']*2,2)}%)\n"
+            msg += f"🎯 *Take Profit 2:* {fmt(sig['tp2'])} (+{round(sig['reward']*5/3, 2)}%)\n"
             msg += f"━━━━━━━━━━━━━━━━\n"
             msg += f"📊 RSI 15m: `{sig['rsi15']}` | RSI 1h: `{sig['rsi1h']}`\n"
             msg += f"📈 {sig['trend']}\n"
-            msg += f"{btc_emoji} BTC: *{sig['btc_trend']}* | Conf: {sig['conf']}% | R/R: 1:{sig['rr']}\n"
-            msg += f"✅ Condiții: `{sig['score']}/8`\n"
+            msg += f"{btc_emoji} BTC: *{sig['btc_trend']}* | Conf: {sig['conf']}%\n"
+            msg += f"📐 R/R: *1:{sig['rr']}* | Condiții: `{sig['score']}/8`\n"
             msg += f"🕐 {sig['time']}\n"
             msg += f"_Tool educational. Nu e sfat financiar._"
 
@@ -242,15 +237,16 @@ def scan():
 
     print(f"  Total: {found} semnal(e)")
 
-# Startup
 send_telegram(
-    f"🤖 *NEXUS Bot ACTIV* ✅\n"
+    f"🤖 *NEXUS Bot v2.0 ACTIV* ✅\n"
     f"• Monede: {', '.join(SYMBOLS)}\n"
     f"• Timeframe: 15m + 1h confirmare\n"
-    f"• Filtre: EMA200, RSI strict, Volum, BTC trend\n"
-    f"• Condiții necesare: 6/8\n"
+    f"• RSI strict: LONG <32 | SHORT >68\n"
+    f"• EMA200 pe ambele TF obligatorie\n"
+    f"• R/R minim: 1:1.5\n"
+    f"• Condiții necesare: 6/8 + volum\n"
     f"• Anti-duplicate: 90 min\n"
-    f"_Monitorizez pietele cu precizie maxima..._"
+    f"_Calitate peste cantitate..._"
 )
 scan()
 schedule.every(15).minutes.do(scan)
