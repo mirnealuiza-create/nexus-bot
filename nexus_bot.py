@@ -10,6 +10,7 @@ SYMBOLS = ["BTCUSDT", "ETHUSDT", "SOLUSDT", "XRPUSDT", "LTCUSDT", "ADAUSDT"]
 INTERVAL = "1h"
 
 last_signals = {}
+btc_trend = "neutral"  # NOU v3.1: cache global pentru trendul BTC
 
 def get_klines(symbol, interval=INTERVAL, limit=100):
     try:
@@ -58,14 +59,12 @@ def find_swings(data, lookback=5):
     highs = data["highs"]
     lows  = data["lows"]
     
-    swing_highs = []  # (index, price)
-    swing_lows  = []  # (index, price)
+    swing_highs = []
+    swing_lows  = []
     
     for i in range(lookback, len(highs) - lookback):
-        # Swing High — cel mai mare din lookback lumânări
         if highs[i] == max(highs[i-lookback:i+lookback+1]):
             swing_highs.append((i, highs[i]))
-        # Swing Low — cel mai mic din lookback lumânări
         if lows[i] == min(lows[i-lookback:i+lookback+1]):
             swing_lows.append((i, lows[i]))
     
@@ -91,13 +90,10 @@ def check_rsi_divergence(closes, lows, highs, rsi_series, lookback=10):
     if len(rsi_series) < lookback + 5:
         return None
     
-    # Ultimele lookback lumânări
-    recent_closes = closes[-lookback:]
     recent_lows   = lows[-lookback:]
     recent_highs  = highs[-lookback:]
     recent_rsi    = rsi_series[-lookback:]
     
-    # Gaseste 2 minime recente pentru BULLISH divergence
     min1_idx = recent_lows.index(min(recent_lows[:lookback//2]))
     min2_idx = lookback//2 + recent_lows[lookback//2:].index(min(recent_lows[lookback//2:]))
     
@@ -106,7 +102,6 @@ def check_rsi_divergence(closes, lows, highs, rsi_series, lookback=10):
     rsi_low1   = recent_rsi[min1_idx]
     rsi_low2   = recent_rsi[min2_idx]
     
-    # Gaseste 2 maxime recente pentru BEARISH divergence
     max1_idx = recent_highs.index(max(recent_highs[:lookback//2]))
     max2_idx = lookback//2 + recent_highs[lookback//2:].index(max(recent_highs[lookback//2:]))
     
@@ -115,14 +110,12 @@ def check_rsi_divergence(closes, lows, highs, rsi_series, lookback=10):
     rsi_high1   = recent_rsi[max1_idx]
     rsi_high2   = recent_rsi[max2_idx]
     
-    # BULLISH divergence: pret lower low + RSI higher low
     if price_low2 < price_low1 * 0.998 and rsi_low2 > rsi_low1 + 2:
         strength = round(rsi_low2 - rsi_low1, 1)
         return {"type": "BULLISH", "strength": strength,
                 "price_low1": price_low1, "price_low2": price_low2,
                 "rsi_low1": round(rsi_low1, 1), "rsi_low2": round(rsi_low2, 1)}
     
-    # BEARISH divergence: pret higher high + RSI lower high
     if price_high2 > price_high1 * 1.002 and rsi_high2 < rsi_high1 - 2:
         strength = round(rsi_high1 - rsi_high2, 1)
         return {"type": "BEARISH", "strength": strength,
@@ -134,7 +127,6 @@ def check_rsi_divergence(closes, lows, highs, rsi_series, lookback=10):
 def check_fibonacci_zone(price, swing_highs, swing_lows, tolerance=0.005):
     """
     Verifică dacă prețul e la un nivel Fibonacci cheie (0.382, 0.5, 0.618)
-    Returns: (level_name, direction) sau None
     """
     if len(swing_highs) < 1 or len(swing_lows) < 1:
         return None
@@ -142,7 +134,6 @@ def check_fibonacci_zone(price, swing_highs, swing_lows, tolerance=0.005):
     last_high = swing_highs[-1][1]
     last_low  = swing_lows[-1][1]
     
-    # Fibonacci de la high la low (pentru LONG — retragere bullish)
     if last_high > last_low:
         fibs = calc_fibonacci_levels(last_high, last_low)
         for level_name in ["0.618", "0.500", "0.382"]:
@@ -151,7 +142,6 @@ def check_fibonacci_zone(price, swing_highs, swing_lows, tolerance=0.005):
                 return {"level": level_name, "direction": "LONG", 
                         "fib_price": fib_price, "swing_high": last_high, "swing_low": last_low}
     
-    # Fibonacci de la low la high (pentru SHORT — retragere bearish)
     if last_low < last_high:
         fibs_up = {
             "0.382": last_low + (last_high - last_low) * 0.382,
@@ -166,6 +156,27 @@ def check_fibonacci_zone(price, swing_highs, swing_lows, tolerance=0.005):
     
     return None
 
+# ============ NOU v3.1: BTC TREND FILTER ============
+def update_btc_trend():
+    """Verifică trendul BTC pentru filtrarea semnalelor pe altcoins"""
+    global btc_trend
+    d = get_klines("BTCUSDT", INTERVAL, 100)
+    if not d:
+        btc_trend = "neutral"
+        return
+    closes = d["closes"]
+    price = closes[-1]
+    ema200 = calc_ema(closes, min(200, len(closes)-1))
+    ema50 = calc_ema(closes, 50)
+    
+    if price > ema200 * 1.01 and price > ema50:
+        btc_trend = "bullish"
+    elif price < ema200 * 0.99 and price < ema50:
+        btc_trend = "bearish"
+    else:
+        btc_trend = "neutral"
+    print(f"  BTC trend: {btc_trend} | Price: {price:.0f} | EMA200: {ema200:.0f}")
+
 def analyze(symbol):
     d = get_klines(symbol, INTERVAL, 100)
     if not d:
@@ -177,90 +188,104 @@ def analyze(symbol):
     volumes = d["volumes"]
     price   = closes[-1]
     
-    # RSI curent
     rsi_now  = calc_rsi(closes)
     rsi_series = calc_rsi_series(closes)
     
-    # EMA 200 pentru trend
     ema200 = calc_ema(closes, min(200, len(closes)-1))
     ema50  = calc_ema(closes, 50)
     ema20  = calc_ema(closes, 20)
     
-    # Swing points
     swing_highs, swing_lows = find_swings(d, lookback=5)
     
-    # Volum
     vol_avg = sum(volumes[-20:]) / 20
     vol_ok  = volumes[-1] > vol_avg * 1.1
     
-    # ATR pentru SL/TP
     atr_raw = sum([highs[i]-lows[i] for i in range(-14, 0)]) / 14
     atr     = max(atr_raw, price * 0.005)
     
-    # ============ STRATEGIA 1: DIVERGENTA RSI ============
     divergence = check_rsi_divergence(closes, lows, highs, rsi_series)
-    
-    # ============ STRATEGIA 2: FIBONACCI ============
     fib_zone = check_fibonacci_zone(price, swing_highs, swing_lows)
     
     sig       = None
     strategy  = None
     score     = 0
     
-    # LONG — Divergenta Bullish + confirmare
+    # ============ STRATEGIA 1: DIVERGENȚA RSI ============
+    
+    # LONG — Divergență Bullish
+    # NOU v3.1: filtre HARD - RSI < 70 + EMA200 cu toleranță 3% (divergența poate prinde reversal)
     if divergence and divergence["type"] == "BULLISH":
-        confirmations = [
-            rsi_now < 50,           # RSI nu e overbought
-            rsi_now > 30,           # Nu e prea oversold (bounce deja)
-            vol_ok,                 # Volum crescut
-            price > lows[-1],       # Pret nu mai face lower low
-        ]
-        score = sum(confirmations)
-        if score >= 3:
-            sig      = "LONG"
-            strategy = f"📐 Divergență RSI Bullish (forță: +{divergence['strength']})\n   RSI: {divergence['rsi_low1']} → {divergence['rsi_low2']} | Preț: ↓"
+        if rsi_now < 70 and price > ema200 * 0.97:
+            confirmations = [
+                rsi_now < 50,
+                rsi_now > 30,
+                vol_ok,
+                price > lows[-1],
+            ]
+            score = sum(confirmations)
+            if score >= 3:
+                sig      = "LONG"
+                strategy = f"📐 Divergență RSI Bullish (forță: +{divergence['strength']})\n   RSI: {divergence['rsi_low1']} → {divergence['rsi_low2']} | Preț: ↓"
     
-    # SHORT — Divergenta Bearish + confirmare
+    # SHORT — Divergență Bearish
+    # NOU v3.1: filtre HARD
     elif divergence and divergence["type"] == "BEARISH":
-        confirmations = [
-            rsi_now > 50,           # RSI nu e oversold
-            rsi_now < 70,           # Nu e prea overbought
-            vol_ok,                 # Volum crescut
-            price < highs[-1],      # Pret nu mai face higher high
-        ]
-        score = sum(confirmations)
-        if score >= 3:
-            sig      = "SHORT"
-            strategy = f"📐 Divergență RSI Bearish (forță: -{divergence['strength']})\n   RSI: {divergence['rsi_high1']} → {divergence['rsi_high2']} | Preț: ↑"
+        if rsi_now > 30 and price < ema200 * 1.03:
+            confirmations = [
+                rsi_now > 50,
+                rsi_now < 70,
+                vol_ok,
+                price < highs[-1],
+            ]
+            score = sum(confirmations)
+            if score >= 3:
+                sig      = "SHORT"
+                strategy = f"📐 Divergență RSI Bearish (forță: -{divergence['strength']})\n   RSI: {divergence['rsi_high1']} → {divergence['rsi_high2']} | Preț: ↑"
     
-    # LONG — Fibonacci zone + confirmare
+    # ============ STRATEGIA 2: FIBONACCI ============
+    
+    # LONG — Fibonacci zone
+    # NOU v3.1: filtre HARD - NU LONG dacă RSI overbought SAU sub EMA200
     if not sig and fib_zone and fib_zone["direction"] == "LONG":
-        confirmations = [
-            rsi_now < 55,           # RSI moderat
-            rsi_now > rsi_series[-2] if len(rsi_series) >= 2 else False,  # RSI in crestere
-            price > ema20,          # Peste EMA 20
-            vol_ok,                 # Volum
-        ]
-        score = sum(confirmations)
-        if score >= 3:
-            sig      = "LONG"
-            strategy = f"🔢 Fibonacci {fib_zone['level']} (LONG)\n   Zona: ${fib_zone['fib_price']:.4f} | Swing: ${fib_zone['swing_low']:.4f}-${fib_zone['swing_high']:.4f}"
+        if rsi_now < 65 and price > ema200:
+            confirmations = [
+                rsi_now < 55,
+                rsi_now > rsi_series[-2] if len(rsi_series) >= 2 else False,
+                price > ema20,
+                vol_ok,
+            ]
+            score = sum(confirmations)
+            if score >= 3:
+                sig      = "LONG"
+                strategy = f"🔢 Fibonacci {fib_zone['level']} (LONG)\n   Zona: ${fib_zone['fib_price']:.4f} | Swing: ${fib_zone['swing_low']:.4f}-${fib_zone['swing_high']:.4f}"
     
-    # SHORT — Fibonacci zone + confirmare
+    # SHORT — Fibonacci zone
+    # NOU v3.1: filtre HARD
     elif not sig and fib_zone and fib_zone["direction"] == "SHORT":
-        confirmations = [
-            rsi_now > 45,           # RSI moderat
-            rsi_now < rsi_series[-2] if len(rsi_series) >= 2 else False,  # RSI in scadere
-            price < ema20,          # Sub EMA 20
-            vol_ok,                 # Volum
-        ]
-        score = sum(confirmations)
-        if score >= 3:
-            sig      = "SHORT"
-            strategy = f"🔢 Fibonacci {fib_zone['level']} (SHORT)\n   Zona: ${fib_zone['fib_price']:.4f} | Swing: ${fib_zone['swing_low']:.4f}-${fib_zone['swing_high']:.4f}"
+        if rsi_now > 35 and price < ema200:
+            confirmations = [
+                rsi_now > 45,
+                rsi_now < rsi_series[-2] if len(rsi_series) >= 2 else False,
+                price < ema20,
+                vol_ok,
+            ]
+            score = sum(confirmations)
+            if score >= 3:
+                sig      = "SHORT"
+                strategy = f"🔢 Fibonacci {fib_zone['level']} (SHORT)\n   Zona: ${fib_zone['fib_price']:.4f} | Swing: ${fib_zone['swing_low']:.4f}-${fib_zone['swing_high']:.4f}"
     
     if not sig:
         return None
+    
+    # ============ NOU v3.1: FILTRU BTC TREND ============
+    # Pe altcoins: nu LONG dacă BTC e bearish, nu SHORT dacă BTC e bullish
+    if symbol != "BTCUSDT":
+        if sig == "LONG" and btc_trend == "bearish":
+            print(f"filtrat (BTC bearish)")
+            return None
+        if sig == "SHORT" and btc_trend == "bullish":
+            print(f"filtrat (BTC bullish)")
+            return None
     
     # Anti-duplicat 2 ore
     key = f"{symbol}_{sig}"
@@ -268,7 +293,7 @@ def analyze(symbol):
     if key in last_signals:
         diff = (now - last_signals[key]).total_seconds() / 60
         if diff < 120:
-            print(f"duplicat ignorat ({diff:.0f} min)")
+            print(f"duplicat ({diff:.0f} min)")
             return None
     last_signals[key] = now
     
@@ -293,6 +318,7 @@ def analyze(symbol):
         "rsi": round(rsi_now, 1),
         "risk": risk, "reward": reward, "rr": rr,
         "trend": trend, "strategy": strategy, "score": score,
+        "btc_trend": btc_trend,
         "time": now.strftime("%H:%M %d.%m.%Y")
     }
 
@@ -314,8 +340,11 @@ def send_telegram(msg):
 
 def scan():
     print(f"\nScanare {datetime.now().strftime('%H:%M:%S')}")
-    found = 0
     
+    # NOU v3.1: actualizează trendul BTC înainte de scanare
+    update_btc_trend()
+    
+    found = 0
     for sym in SYMBOLS:
         print(f"  {sym}...", end=" ", flush=True)
         sig = analyze(sym)
@@ -323,6 +352,8 @@ def scan():
             e     = "🟢" if sig["direction"]=="LONG" else "🔴"
             arrow = "⬆️" if sig["direction"]=="LONG" else "⬇️"
             print(f"{sig['direction']}! RSI:{sig['rsi']} RR:{sig['rr']}")
+            
+            btc_emoji = {"bullish": "🟢", "bearish": "🔴", "neutral": "🟡"}[sig['btc_trend']]
             
             msg  = f"{e} *{sig['direction']} — {sig['symbol']}* {arrow}\n"
             msg += f"━━━━━━━━━━━━━━━━\n"
@@ -332,6 +363,7 @@ def scan():
             msg += f"🎯 *Take Profit 2:* {fmt(sig['tp2'])} (+{round(sig['reward']*5/3,2)}%)\n"
             msg += f"━━━━━━━━━━━━━━━━\n"
             msg += f"📊 RSI: `{sig['rsi']}` | {sig['trend']}\n"
+            msg += f"{btc_emoji} BTC trend: *{sig['btc_trend']}*\n"
             msg += f"📐 R/R: *1:{sig['rr']}*\n"
             msg += f"🧠 *Strategie:*\n{sig['strategy']}\n"
             msg += f"🕐 {sig['time']}\n"
@@ -347,12 +379,14 @@ def scan():
     print(f"  Total: {found} semnal(e)")
 
 send_telegram(
-    f"🤖 *NEXUS Bot v3.0 ACTIV* ✅\n"
+    f"🤖 *NEXUS Bot v3.1 ACTIV* ✅\n"
     f"━━━━━━━━━━━━━━━━\n"
     f"• Monede: {', '.join(SYMBOLS)}\n"
     f"• Timeframe: 1H\n"
     f"• Strategie 1: Divergență RSI Bullish/Bearish\n"
     f"• Strategie 2: Fibonacci 0.382/0.5/0.618\n"
+    f"• 🆕 Filtre HARD: RSI extreme + EMA200\n"
+    f"• 🆕 Filtru BTC trend pe altcoins\n"
     f"• Anti-duplicate: 2 ore\n"
     f"━━━━━━━━━━━━━━━━\n"
     f"_Calitate peste cantitate..._"
