@@ -75,68 +75,84 @@ def calc_fibonacci_levels(high, low):
         "0.786": high - diff * 0.786,
     }
 
+# ============ NOU v3.2: STRUCTURĂ TREND ============
+def check_trend_structure(swing_highs, swing_lows):
+    """Verifică structura: 'uptrend', 'downtrend', 'sideways'"""
+    if len(swing_highs) < 2 or len(swing_lows) < 2:
+        return "sideways"
+    last_highs = [h[1] for h in swing_highs[-2:]]
+    last_lows  = [l[1] for l in swing_lows[-2:]]
+    higher_highs = last_highs[-1] > last_highs[-2]
+    higher_lows  = last_lows[-1]  > last_lows[-2]
+    lower_highs  = last_highs[-1] < last_highs[-2]
+    lower_lows   = last_lows[-1]  < last_lows[-2]
+    if higher_highs and higher_lows:
+        return "uptrend"
+    elif lower_highs and lower_lows:
+        return "downtrend"
+    else:
+        return "sideways"
+
+# ============ NOU v3.2: MOMENTUM 4H ============
+def check_recent_momentum(closes, lookback=4):
+    """Procent schimbare în ultimele 4 lumânări"""
+    if len(closes) < lookback + 1:
+        return 0
+    return (closes[-1] - closes[-lookback-1]) / closes[-lookback-1] * 100
+
 def check_rsi_divergence(closes, lows, highs, rsi_series, lookback=10):
     if len(rsi_series) < lookback + 5:
         return None
-
-    recent_lows  = lows[-lookback:]
-    recent_highs = highs[-lookback:]
-    recent_rsi   = rsi_series[-lookback:]
-
+    recent_lows   = lows[-lookback:]
+    recent_highs  = highs[-lookback:]
+    recent_rsi    = rsi_series[-lookback:]
     min1_idx = recent_lows.index(min(recent_lows[:lookback//2]))
     min2_idx = lookback//2 + recent_lows[lookback//2:].index(min(recent_lows[lookback//2:]))
     price_low1 = recent_lows[min1_idx]
     price_low2 = recent_lows[min2_idx]
     rsi_low1   = recent_rsi[min1_idx]
     rsi_low2   = recent_rsi[min2_idx]
-
     max1_idx = recent_highs.index(max(recent_highs[:lookback//2]))
     max2_idx = lookback//2 + recent_highs[lookback//2:].index(max(recent_highs[lookback//2:]))
     price_high1 = recent_highs[max1_idx]
     price_high2 = recent_highs[max2_idx]
     rsi_high1   = recent_rsi[max1_idx]
     rsi_high2   = recent_rsi[max2_idx]
-
     if price_low2 < price_low1 * 0.998 and rsi_low2 > rsi_low1 + 2:
         strength = round(rsi_low2 - rsi_low1, 1)
         return {"type": "BULLISH", "strength": strength,
+                "price_low1": price_low1, "price_low2": price_low2,
                 "rsi_low1": round(rsi_low1, 1), "rsi_low2": round(rsi_low2, 1)}
-
     if price_high2 > price_high1 * 1.002 and rsi_high2 < rsi_high1 - 2:
         strength = round(rsi_high1 - rsi_high2, 1)
         return {"type": "BEARISH", "strength": strength,
+                "price_high1": price_high1, "price_high2": price_high2,
                 "rsi_high1": round(rsi_high1, 1), "rsi_high2": round(rsi_high2, 1)}
-
     return None
 
-def check_fibonacci_zone(price, swing_highs, swing_lows, tolerance=0.01):
+def check_fibonacci_zone(price, swing_highs, swing_lows, tolerance=0.005):
     if len(swing_highs) < 1 or len(swing_lows) < 1:
         return None
-
     last_high = swing_highs[-1][1]
     last_low  = swing_lows[-1][1]
-
-    # LONG — retragere bullish (de la high la low)
     if last_high > last_low:
         fibs = calc_fibonacci_levels(last_high, last_low)
         for level_name in ["0.618", "0.500", "0.382"]:
             fib_price = fibs[level_name]
             if abs(price - fib_price) / price < tolerance:
-                return {"level": level_name, "direction": "LONG",
+                return {"level": level_name, "direction": "LONG", 
                         "fib_price": fib_price, "swing_high": last_high, "swing_low": last_low}
-
-    # SHORT — retragere bearish (de la low la high)
-    fibs_up = {
-        "0.382": last_low + (last_high - last_low) * 0.382,
-        "0.500": last_low + (last_high - last_low) * 0.500,
-        "0.618": last_low + (last_high - last_low) * 0.618,
-    }
-    for level_name in ["0.618", "0.500", "0.382"]:
-        fib_price = fibs_up[level_name]
-        if abs(price - fib_price) / price < tolerance:
-            return {"level": level_name, "direction": "SHORT",
-                    "fib_price": fib_price, "swing_high": last_high, "swing_low": last_low}
-
+    if last_low < last_high:
+        fibs_up = {
+            "0.382": last_low + (last_high - last_low) * 0.382,
+            "0.500": last_low + (last_high - last_low) * 0.500,
+            "0.618": last_low + (last_high - last_low) * 0.618,
+        }
+        for level_name in ["0.618", "0.500", "0.382"]:
+            fib_price = fibs_up[level_name]
+            if abs(price - fib_price) / price < tolerance:
+                return {"level": level_name, "direction": "SHORT",
+                        "fib_price": fib_price, "swing_high": last_high, "swing_low": last_low}
     return None
 
 def update_btc_trend():
@@ -146,9 +162,9 @@ def update_btc_trend():
         btc_trend = "neutral"
         return
     closes = d["closes"]
-    price  = closes[-1]
+    price = closes[-1]
     ema200 = calc_ema(closes, min(200, len(closes)-1))
-    ema50  = calc_ema(closes, 50)
+    ema50 = calc_ema(closes, 50)
     if price > ema200 * 1.01 and price > ema50:
         btc_trend = "bullish"
     elif price < ema200 * 0.99 and price < ema50:
@@ -161,72 +177,88 @@ def analyze(symbol):
     d = get_klines(symbol, INTERVAL, 100)
     if not d:
         return None
-
+    
     closes  = d["closes"]
     highs   = d["highs"]
     lows    = d["lows"]
     volumes = d["volumes"]
     price   = closes[-1]
-
-    rsi_now    = calc_rsi(closes)
+    
+    rsi_now  = calc_rsi(closes)
     rsi_series = calc_rsi_series(closes)
-
+    
     ema200 = calc_ema(closes, min(200, len(closes)-1))
     ema50  = calc_ema(closes, 50)
     ema20  = calc_ema(closes, 20)
-
+    
     swing_highs, swing_lows = find_swings(d, lookback=5)
-
+    
+    # NOU v3.2
+    trend_structure = check_trend_structure(swing_highs, swing_lows)
+    momentum_4h = check_recent_momentum(closes, lookback=4)
+    
+    # NOU v3.2: volum mai strict
     vol_avg = sum(volumes[-20:]) / 20
-    vol_ok  = volumes[-1] > vol_avg * 1.1
-
+    vol_ok  = volumes[-1] > vol_avg * 1.3
+    
     atr_raw = sum([highs[i]-lows[i] for i in range(-14, 0)]) / 14
     atr     = max(atr_raw, price * 0.005)
-
+    
     divergence = check_rsi_divergence(closes, lows, highs, rsi_series)
-    fib_zone   = check_fibonacci_zone(price, swing_highs, swing_lows)
-
-    sig      = None
-    strategy = None
-    score    = 0
-
-    # ===== STRATEGIA 1: DIVERGENTA RSI =====
-
-    # LONG — Divergenta Bullish (toleranta 7% sub EMA200)
+    fib_zone = check_fibonacci_zone(price, swing_highs, swing_lows)
+    
+    sig       = None
+    strategy  = None
+    score     = 0
+    
+    # ============ FILTRE GLOBALE v3.2 ============
+    long_blocked_by_trend = (trend_structure == "downtrend") or (momentum_4h < -2.0)
+    short_blocked_by_trend = (trend_structure == "uptrend") or (momentum_4h > 2.0)
+    
+    # ============ STRATEGIA 1: DIVERGENȚA RSI ============
+    
+    # LONG — Divergență Bullish
     if divergence and divergence["type"] == "BULLISH":
-        if rsi_now < 70 and price > ema200 * 0.93:
+        if (rsi_now < 65 
+            and price > ema200 
+            and price > ema50 
+            and not long_blocked_by_trend):
             confirmations = [
-                rsi_now < 55,
-                rsi_now > 25,
+                rsi_now < 50,
+                rsi_now > 30,
                 vol_ok,
                 price > lows[-1],
             ]
             score = sum(confirmations)
             if score >= 3:
                 sig      = "LONG"
-                strategy = (f"📐 Divergență RSI Bullish (forță: +{divergence['strength']})\n"
-                            f"   RSI: {divergence['rsi_low1']} → {divergence['rsi_low2']} | Preț: ↓↓ RSI: ↑↑")
-
-    # SHORT — Divergenta Bearish (toleranta 7% peste EMA200)
+                strategy = f"📐 Divergență RSI Bullish (forță: +{divergence['strength']})\n   RSI: {divergence['rsi_low1']} → {divergence['rsi_low2']} | Preț: ↓"
+    
+    # SHORT — Divergență Bearish
     elif divergence and divergence["type"] == "BEARISH":
-        if rsi_now > 30 and price < ema200 * 1.07:
+        if (rsi_now > 35 
+            and price < ema200 
+            and price < ema50 
+            and not short_blocked_by_trend):
             confirmations = [
-                rsi_now > 45,
-                rsi_now < 75,
+                rsi_now > 50,
+                rsi_now < 70,
                 vol_ok,
                 price < highs[-1],
             ]
             score = sum(confirmations)
             if score >= 3:
                 sig      = "SHORT"
-                strategy = (f"📐 Divergență RSI Bearish (forță: -{divergence['strength']})\n"
-                            f"   RSI: {divergence['rsi_high1']} → {divergence['rsi_high2']} | Preț: ↑↑ RSI: ↓↓")
-
-    # ===== STRATEGIA 2: FIBONACCI =====
-
-    # LONG — la nivel Fibonacci (toleranta 7% sub EMA200)
+                strategy = f"📐 Divergență RSI Bearish (forță: -{divergence['strength']})\n   RSI: {divergence['rsi_high1']} → {divergence['rsi_high2']} | Preț: ↑"
+    
+    # ============ STRATEGIA 2: FIBONACCI ============
+    
+    # LONG — Fibonacci zone
     if not sig and fib_zone and fib_zone["direction"] == "LONG":
-        if rsi_now < 65 and price > ema200 * 0.93:
+        if (rsi_now < 60 
+            and price > ema200 
+            and price > ema50 
+            and not long_blocked_by_trend):
             confirmations = [
                 rsi_now < 55,
                 rsi_now > rsi_series[-2] if len(rsi_series) >= 2 else False,
@@ -236,13 +268,14 @@ def analyze(symbol):
             score = sum(confirmations)
             if score >= 3:
                 sig      = "LONG"
-                strategy = (f"🔢 Fibonacci {fib_zone['level']} (LONG)\n"
-                            f"   Zona: ${fib_zone['fib_price']:.4f} | "
-                            f"Swing: ${fib_zone['swing_low']:.4f} - ${fib_zone['swing_high']:.4f}")
-
-    # SHORT — la nivel Fibonacci (toleranta 7% peste EMA200)
+                strategy = f"🔢 Fibonacci {fib_zone['level']} (LONG)\n   Zona: ${fib_zone['fib_price']:.4f} | Swing: ${fib_zone['swing_low']:.4f}-${fib_zone['swing_high']:.4f}"
+    
+    # SHORT — Fibonacci zone
     elif not sig and fib_zone and fib_zone["direction"] == "SHORT":
-        if rsi_now > 35 and price < ema200 * 1.07:
+        if (rsi_now > 40 
+            and price < ema200 
+            and price < ema50 
+            and not short_blocked_by_trend):
             confirmations = [
                 rsi_now > 45,
                 rsi_now < rsi_series[-2] if len(rsi_series) >= 2 else False,
@@ -252,14 +285,12 @@ def analyze(symbol):
             score = sum(confirmations)
             if score >= 3:
                 sig      = "SHORT"
-                strategy = (f"🔢 Fibonacci {fib_zone['level']} (SHORT)\n"
-                            f"   Zona: ${fib_zone['fib_price']:.4f} | "
-                            f"Swing: ${fib_zone['swing_low']:.4f} - ${fib_zone['swing_high']:.4f}")
-
+                strategy = f"🔢 Fibonacci {fib_zone['level']} (SHORT)\n   Zona: ${fib_zone['fib_price']:.4f} | Swing: ${fib_zone['swing_low']:.4f}-${fib_zone['swing_high']:.4f}"
+    
     if not sig:
         return None
-
-    # Filtru BTC trend pe altcoins
+    
+    # ============ FILTRU BTC TREND ============
     if symbol != "BTCUSDT":
         if sig == "LONG" and btc_trend == "bearish":
             print(f"filtrat (BTC bearish)")
@@ -267,18 +298,18 @@ def analyze(symbol):
         if sig == "SHORT" and btc_trend == "bullish":
             print(f"filtrat (BTC bullish)")
             return None
-
-    # Anti-duplicat 60 minute
+    
+    # Anti-duplicat 2 ore
     key = f"{symbol}_{sig}"
     now = datetime.now()
     if key in last_signals:
         diff = (now - last_signals[key]).total_seconds() / 60
-        if diff < 60:
+        if diff < 120:
             print(f"duplicat ({diff:.0f} min)")
             return None
     last_signals[key] = now
-
-    # SL/TP cu R/R 1:1.5 si 1:2.5
+    
+    # SL/TP
     if sig == "LONG":
         sl  = round(price - atr * 2, 6)
         tp1 = round(price + atr * 3, 6)
@@ -287,12 +318,12 @@ def analyze(symbol):
         sl  = round(price + atr * 2, 6)
         tp1 = round(price - atr * 3, 6)
         tp2 = round(price - atr * 5, 6)
-
+    
     risk   = round(abs(price - sl) / price * 100, 2)
     reward = round(abs(tp1 - price) / price * 100, 2)
     rr     = round(reward / risk, 1) if risk > 0 else 0
     trend  = "✅ peste EMA200" if price > ema200 else "⚠️ sub EMA200"
-
+    
     return {
         "symbol": symbol, "direction": sig, "price": price,
         "sl": sl, "tp1": tp1, "tp2": tp2,
@@ -300,6 +331,8 @@ def analyze(symbol):
         "risk": risk, "reward": reward, "rr": rr,
         "trend": trend, "strategy": strategy, "score": score,
         "btc_trend": btc_trend,
+        "trend_structure": trend_structure,
+        "momentum_4h": round(momentum_4h, 2),
         "time": now.strftime("%H:%M %d.%m.%Y")
     }
 
@@ -322,39 +355,42 @@ def send_telegram(msg):
 def scan():
     print(f"\nScanare {datetime.now().strftime('%H:%M:%S')}")
     update_btc_trend()
+    
     found = 0
-
     for sym in SYMBOLS:
         print(f"  {sym}...", end=" ", flush=True)
         sig = analyze(sym)
         if sig:
-            e     = "🟢" if sig["direction"] == "LONG" else "🔴"
-            arrow = "⬆️" if sig["direction"] == "LONG" else "⬇️"
-            print(f"{sig['direction']}! RSI:{sig['rsi']} RR:{sig['rr']}")
-
-            btc_emoji = {"bullish": "🟢", "bearish": "🔴", "neutral": "🟡"}[sig["btc_trend"]]
-
+            e     = "🟢" if sig["direction"]=="LONG" else "🔴"
+            arrow = "⬆️" if sig["direction"]=="LONG" else "⬇️"
+            print(f"{sig['direction']}! RSI:{sig['rsi']} RR:{sig['rr']} Trend:{sig['trend_structure']}")
+            
+            btc_emoji = {"bullish": "🟢", "bearish": "🔴", "neutral": "🟡"}[sig['btc_trend']]
+            struct_emoji = {"uptrend": "📈", "downtrend": "📉", "sideways": "↔️"}[sig['trend_structure']]
+            momentum_sign = "+" if sig['momentum_4h'] >= 0 else ""
+            
             msg  = f"{e} *{sig['direction']} — {sig['symbol']}* {arrow}\n"
             msg += f"━━━━━━━━━━━━━━━━\n"
             msg += f"💰 *Entry:* {fmt(sig['price'])}\n"
             msg += f"🛑 *Stop Loss:* {fmt(sig['sl'])} (-{sig['risk']}%)\n"
             msg += f"🎯 *Take Profit 1:* {fmt(sig['tp1'])} (+{sig['reward']}%)\n"
-            msg += f"🎯 *Take Profit 2:* {fmt(sig['tp2'])} (+{round(sig['reward']*5/3, 2)}%)\n"
+            msg += f"🎯 *Take Profit 2:* {fmt(sig['tp2'])} (+{round(sig['reward']*5/3,2)}%)\n"
             msg += f"━━━━━━━━━━━━━━━━\n"
             msg += f"📊 RSI: `{sig['rsi']}` | {sig['trend']}\n"
             msg += f"{btc_emoji} BTC: *{sig['btc_trend']}*\n"
+            msg += f"{struct_emoji} Structură: *{sig['trend_structure']}* | 4h: {momentum_sign}{sig['momentum_4h']}%\n"
             msg += f"📐 R/R: *1:{sig['rr']}*\n"
             msg += f"🧠 *Strategie:*\n{sig['strategy']}\n"
             msg += f"🕐 {sig['time']}\n"
             msg += f"_Tool educational. Nu e sfat financiar._"
-
+            
             send_telegram(msg)
             found += 1
             time.sleep(1)
         else:
             print("fara semnal")
         time.sleep(0.5)
-
+    
     print(f"  Total: {found} semnal(e)")
 
 send_telegram(
@@ -362,14 +398,16 @@ send_telegram(
     f"━━━━━━━━━━━━━━━━\n"
     f"• Monede: {', '.join(SYMBOLS)}\n"
     f"• Timeframe: 1H\n"
-    f"• Strategie 1: Divergență RSI\n"
+    f"• Strategie 1: Divergență RSI Bullish/Bearish\n"
     f"• Strategie 2: Fibonacci 0.382/0.5/0.618\n"
-    f"• Toleranță EMA200: ±7%\n"
-    f"• Toleranță Fibonacci: 1%\n"
-    f"• Filtru BTC trend: activ\n"
-    f"• Anti-duplicate: 60 min\n"
+    f"• 🆕 Filtre STRICTE: EMA200 + EMA50 (fără toleranță)\n"
+    f"• 🆕 Filtru structură trend (HH/HL vs LH/LL)\n"
+    f"• 🆕 Filtru momentum 4h (blochează contra-trend rapid)\n"
+    f"• 🆕 Volum strict: 1.3x medie\n"
+    f"• Filtru BTC trend pe altcoins\n"
+    f"• Anti-duplicate: 2 ore\n"
     f"━━━━━━━━━━━━━━━━\n"
-    f"_Calitate peste cantitate..._"
+    f"_Mai puține semnale, dar de calitate..._"
 )
 scan()
 schedule.every(15).minutes.do(scan)
