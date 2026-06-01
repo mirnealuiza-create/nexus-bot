@@ -10,7 +10,7 @@ SYMBOLS = ["BTCUSDT", "ETHUSDT", "SOLUSDT", "XRPUSDT", "LTCUSDT", "ADAUSDT"]
 INTERVAL = "1h"
 
 last_signals = {}
-signals_today = []  # NOU v4.0: limita semnale/zi
+signals_today = []
 MAX_SIGNALS_PER_DAY = 3
 
 def get_klines(symbol, interval=INTERVAL, limit=100):
@@ -49,7 +49,6 @@ def calc_ema(closes, p):
     return e
 
 def find_swings(data, lookback=5):
-    """Găsește swing highs și lows"""
     highs = data["highs"]
     lows  = data["lows"]
     swing_highs = []
@@ -62,7 +61,7 @@ def find_swings(data, lookback=5):
     return swing_highs, swing_lows
 
 def find_supports_resistances(swing_highs, swing_lows, price, min_distance_pct=0.003):
-    """Suporturi (sub preț) și rezistențe (peste preț), sortate după apropiere"""
+    """Suporturi (sub preț) și rezistențe (peste preț)"""
     min_dist = price * min_distance_pct
     resistances = sorted(
         [h[1] for h in swing_highs if h[1] > price + min_dist],
@@ -78,20 +77,96 @@ def is_near_level(price, level, tolerance_pct=0.008):
     """Verifică dacă prețul e aproape de un nivel (default 0.8%)"""
     return abs(price - level) / price < tolerance_pct
 
+# ============ NOU v4.1: TREND MAI AGRESIV ============
 def check_trend(closes, ema200):
     """
-    Trend simplu: BULLISH / BEARISH / SIDEWAYS pe baza ultimelor 20 close
+    Trend detection îmbunătățit:
+    - BEARISH dacă: preț < EMA200 ȘI (distanță > 1.5% SAU 3 close descrescătoare)
+    - BULLISH dacă: preț > EMA200 ȘI (distanță > 1.5% SAU 3 close crescătoare)
+    - SIDEWAYS în rest
     """
     price = closes[-1]
-    recent_avg = sum(closes[-20:]) / 20
+    distance_pct = abs(price - ema200) / price * 100
     
-    # Bullish: preț peste EMA200 ȘI peste media recentă
-    if price > ema200 and price > recent_avg:
-        return "BULLISH"
-    # Bearish: preț sub EMA200 ȘI sub media recentă
-    if price < ema200 and price < recent_avg:
-        return "BEARISH"
+    # Ultimele 3 close descrescătoare = momentum bearish
+    last_3 = closes[-3:]
+    declining = last_3[0] > last_3[1] > last_3[2]
+    rising = last_3[0] < last_3[1] < last_3[2]
+    
+    # Media ultimelor 10 vs 20
+    avg_10 = sum(closes[-10:]) / 10
+    avg_20 = sum(closes[-20:]) / 20
+    
+    # BEARISH agresiv
+    if price < ema200:
+        if distance_pct > 1.5 or declining or avg_10 < avg_20 * 0.99:
+            return "BEARISH"
+    
+    # BULLISH agresiv
+    if price > ema200:
+        if distance_pct > 1.5 or rising or avg_10 > avg_20 * 1.01:
+            return "BULLISH"
+    
     return "SIDEWAYS"
+
+# ============ NOU v4.1: VALIDARE SUPORT/REZISTENȚĂ ============
+def is_support_valid(support, recent_lows, recent_closes):
+    """
+    Verifică dacă supportul NU a fost spart recent.
+    Returns: True dacă e încă valid, False dacă a fost rupt.
+    """
+    # Verifică ultimele 3 lumânări — dacă low-ul a scăzut sub support, e rupt
+    for low in recent_lows[-3:]:
+        if low < support * 0.997:  # spart cu 0.3% sau mai mult
+            return False
+    # Și dacă ultimul close e clar sub support
+    if recent_closes[-1] < support * 0.998:
+        return False
+    return True
+
+def is_resistance_valid(resistance, recent_highs, recent_closes):
+    """Verifică dacă rezistența NU a fost spartă recent"""
+    for high in recent_highs[-3:]:
+        if high > resistance * 1.003:
+            return False
+    if recent_closes[-1] > resistance * 1.002:
+        return False
+    return True
+
+# ============ NOU v4.1: TP-URI DISTANȚATE ============
+def get_distanced_tps(price, levels, direction, min_distance_pct=0.005):
+    """
+    Returnează 2 TP-uri cu distanță minimă între ele.
+    Dacă nu există suficientă distanță, al doilea = proiecție.
+    """
+    if not levels:
+        return None, None
+    
+    buffer = price * 0.003
+    
+    if direction == "SHORT":
+        # levels = supports (sortate apropiere ascendent)
+        tp1 = levels[0] + buffer
+        # Caută al doilea support la min 0.5% sub primul
+        tp2 = None
+        for level in levels[1:]:
+            if (tp1 - level) / price >= min_distance_pct:
+                tp2 = level + buffer
+                break
+        if tp2 is None:
+            # Fallback: proiecție 1.8x distanța TP1
+            tp2 = price - (price - tp1) * 1.8
+    else:  # LONG
+        tp1 = levels[0] - buffer
+        tp2 = None
+        for level in levels[1:]:
+            if (level - tp1) / price >= min_distance_pct:
+                tp2 = level - buffer
+                break
+        if tp2 is None:
+            tp2 = price + (tp1 - price) * 1.8
+    
+    return tp1, tp2
 
 def analyze(symbol):
     d = get_klines(symbol, INTERVAL, 100)
@@ -103,52 +178,69 @@ def analyze(symbol):
     lows    = d["lows"]
     price   = closes[-1]
     
-    # Indicatorii
     rsi = calc_rsi(closes)
     ema200 = calc_ema(closes, min(200, len(closes)-1))
     trend = check_trend(closes, ema200)
     
-    # Swing points + suporturi/rezistențe
     swing_highs, swing_lows = find_swings(d, lookback=5)
     resistances, supports = find_supports_resistances(swing_highs, swing_lows, price)
     
-    # Verifică dacă prețul e aproape de o rezistență sau support
+    # ============ NOU v4.1: BLOCAJ DISTANȚĂ EMA200 ============
+    distance_ema_pct = (price - ema200) / price * 100
+    # Blochează LONG dacă preț > 1.5% sub EMA200 (downtrend confirmat)
+    block_long = distance_ema_pct < -1.5
+    # Blochează SHORT dacă preț > 1.5% peste EMA200 (uptrend confirmat)
+    block_short = distance_ema_pct > 1.5
+    
+    # Verifică niveluri apropiate
     near_resistance = None
     near_support = None
     
     if resistances:
-        if is_near_level(price, resistances[0]):
-            near_resistance = resistances[0]
+        for r in resistances[:3]:  # caută în primele 3 rezistențe
+            if is_near_level(price, r):
+                # NOU v4.1: validează că rezistența nu a fost spartă
+                if is_resistance_valid(r, highs, closes):
+                    near_resistance = r
+                    break
     
     if supports:
-        if is_near_level(price, supports[0]):
-            near_support = supports[0]
+        for s in supports[:3]:
+            if is_near_level(price, s):
+                # NOU v4.1: validează că supportul nu a fost spart
+                if is_support_valid(s, lows, closes):
+                    near_support = s
+                    break
     
     sig = None
     reasons = []
     
     # ============ LOGICA SHORT ============
-    # Conditii: preț la rezistență + RSI nu oversold + trend nu bullish
-    if near_resistance and rsi > 40 and rsi < 70 and trend != "BULLISH":
+    if (near_resistance 
+        and rsi > 40 and rsi < 70 
+        and trend != "BULLISH" 
+        and not block_short):
         sig = "SHORT"
         reasons.append("📉 Sub EMA200" if price < ema200 else "↔️ Sideways la EMA200")
-        reasons.append(f"🚧 Rezistență: ${near_resistance:.4f}")
+        reasons.append(f"🚧 Rezistență validă: ${near_resistance:.4f}")
         reasons.append(f"📊 RSI: {rsi:.1f}")
         reasons.append(f"✅ Trend {trend}")
     
     # ============ LOGICA LONG ============
-    # Conditii: preț la support + RSI nu overbought + trend nu bearish
-    elif near_support and rsi < 60 and rsi > 30 and trend != "BEARISH":
+    elif (near_support 
+          and rsi < 60 and rsi > 30 
+          and trend != "BEARISH" 
+          and not block_long):
         sig = "LONG"
         reasons.append("📈 Peste EMA200" if price > ema200 else "↔️ Sideways la EMA200")
-        reasons.append(f"🟩 Support: ${near_support:.4f}")
+        reasons.append(f"🟩 Support valid: ${near_support:.4f}")
         reasons.append(f"📊 RSI: {rsi:.1f}")
         reasons.append(f"✅ Trend {trend}")
     
     if not sig:
         return None
     
-    # Anti-duplicat 3 ore (mai strict ca înainte)
+    # Anti-duplicat 3 ore
     key = f"{symbol}_{sig}"
     now = datetime.now()
     if key in last_signals:
@@ -157,33 +249,20 @@ def analyze(symbol):
             print(f"duplicat ({diff:.0f} min)")
             return None
     
-    # ============ SL/TP INTELIGENT ============
-    buffer = price * 0.003  # 0.3% buffer
+    # ============ SL/TP cu TP-uri distanțate ============
+    buffer = price * 0.003
     
     if sig == "SHORT":
-        # SL: peste rezistență
         sl = near_resistance + buffer
-        # TP1: primul support sub preț
-        # TP2: al doilea support
-        if len(supports) >= 2:
-            tp1 = supports[0] + buffer  # ieșim puțin înainte
-            tp2 = supports[1] + buffer
-        elif len(supports) == 1:
-            tp1 = supports[0] + buffer
-            tp2 = price - (price - tp1) * 1.8
-        else:
-            # Fallback - 1.5% și 2.5%
+        tp1, tp2 = get_distanced_tps(price, supports, "SHORT")
+        if tp1 is None:
+            # Fallback complet
             tp1 = price * 0.985
             tp2 = price * 0.975
     else:  # LONG
         sl = near_support - buffer
-        if len(resistances) >= 2:
-            tp1 = resistances[0] - buffer
-            tp2 = resistances[1] - buffer
-        elif len(resistances) == 1:
-            tp1 = resistances[0] - buffer
-            tp2 = price + (tp1 - price) * 1.8
-        else:
+        tp1, tp2 = get_distanced_tps(price, resistances, "LONG")
+        if tp1 is None:
             tp1 = price * 1.015
             tp2 = price * 1.025
     
@@ -193,14 +272,20 @@ def analyze(symbol):
     rr      = round(reward / risk, 2) if risk > 0 else 0
     rr2     = round(reward2 / risk, 2) if risk > 0 else 0
     
-    # ============ FILTRU R/R MINIM 1:1.2 ============
+    # Filtru R/R minim 1:1.2
     if rr < 1.2:
         print(f"R/R prost: {rr}")
         return None
     
-    # ============ FILTRU RISK MAXIM 2% ============
+    # Filtru risc maxim 2%
     if risk > 2.0:
         print(f"risc prea mare: {risk}%")
+        return None
+    
+    # NOU v4.1: Filtru distanță TP1-TP2 (minim 0.4%)
+    tp_distance_pct = abs(tp2 - tp1) / price * 100
+    if tp_distance_pct < 0.4:
+        print(f"TP-uri prea apropiate: {tp_distance_pct:.2f}%")
         return None
     
     last_signals[key] = now
@@ -209,6 +294,7 @@ def analyze(symbol):
         "symbol": symbol, "direction": sig, "price": price,
         "sl": round(sl, 6), "tp1": round(tp1, 6), "tp2": round(tp2, 6),
         "rsi": round(rsi, 1), "ema200": round(ema200, 4),
+        "ema_distance": round(distance_ema_pct, 2),
         "risk": risk, "reward": reward, "reward2": reward2,
         "rr": rr, "rr2": rr2,
         "trend": trend, "reasons": reasons,
@@ -234,7 +320,6 @@ def send_telegram(msg):
         print(f"Eroare Telegram: {e}")
 
 def reset_daily_count():
-    """Resetează contorul la miezul nopții"""
     global signals_today
     signals_today = []
     print("Contor zilnic resetat")
@@ -243,17 +328,14 @@ def scan():
     global signals_today
     print(f"\nScanare {datetime.now().strftime('%H:%M:%S')}")
     
-    # Curăță semnalele vechi (mai vechi de 24h)
     now = datetime.now()
     signals_today = [s for s in signals_today if (now - s).total_seconds() < 86400]
     
-    # Verifică limita zilnică
     if len(signals_today) >= MAX_SIGNALS_PER_DAY:
-        print(f"  Limită atinsă: {len(signals_today)}/{MAX_SIGNALS_PER_DAY} semnale azi")
+        print(f"  Limită atinsă: {len(signals_today)}/{MAX_SIGNALS_PER_DAY}")
         return
     
     for sym in SYMBOLS:
-        # Stop dacă am atins limita
         if len(signals_today) >= MAX_SIGNALS_PER_DAY:
             print(f"  Limită atinsă în timpul scanării")
             break
@@ -266,6 +348,7 @@ def scan():
             print(f"{sig['direction']}! RSI:{sig['rsi']} R/R:{sig['rr']}")
             
             count_after = len(signals_today) + 1
+            ema_sign = "+" if sig['ema_distance'] >= 0 else ""
             
             msg  = f"{e} *{sig['direction']} — {sig['symbol']}* {arrow}\n"
             msg += f"━━━━━━━━━━━━━━━━\n"
@@ -274,7 +357,7 @@ def scan():
             msg += f"🎯 *TP1:* {fmt(sig['tp1'])} (+{sig['reward']}%) | R/R 1:{sig['rr']}\n"
             msg += f"🎯 *TP2:* {fmt(sig['tp2'])} (+{sig['reward2']}%) | R/R 1:{sig['rr2']}\n"
             msg += f"━━━━━━━━━━━━━━━━\n"
-            msg += f"📊 RSI: `{sig['rsi']}` | EMA200: {fmt(sig['ema200'])}\n"
+            msg += f"📊 RSI: `{sig['rsi']}` | EMA200: {fmt(sig['ema200'])} ({ema_sign}{sig['ema_distance']}%)\n"
             msg += f"📈 *Trend:* {sig['trend']}\n"
             msg += f"━━━━━━━━━━━━━━━━\n"
             msg += f"*✅ Motive:*\n"
@@ -294,21 +377,27 @@ def scan():
     print(f"  Status: {len(signals_today)}/{MAX_SIGNALS_PER_DAY} semnale azi")
 
 send_telegram(
-    f"🤖 *NEXUS Bot v4.0 ACTIV* ✅\n"
+    f"🤖 *NEXUS Bot v4.1 ACTIV* ✅\n"
     f"━━━━━━━━━━━━━━━━\n"
     f"📊 *Logică simplificată:*\n"
-    f"  • RSI (40-70 pentru SHORT, 30-60 pentru LONG)\n"
-    f"  • Suport/Rezistență reale\n"
-    f"  • Trend EMA200 + media 20\n"
+    f"  • RSI (40-70 SHORT, 30-60 LONG)\n"
+    f"  • Suport/Rezistență reale + validare\n"
+    f"  • Trend EMA200 + media + momentum\n"
     f"━━━━━━━━━━━━━━━━\n"
-    f"🎯 *SL/TP din chart, nu din formulă:*\n"
+    f"🆕 *Fix-uri v4.1:*\n"
+    f"  • TP1 ≠ TP2 (min 0.4% distanță)\n"
+    f"  • Detect downtrend agresiv\n"
+    f"  • Validare support nerupt\n"
+    f"  • Blocaj LONG sub EMA200 -1.5%\n"
+    f"  • Blocaj SHORT peste EMA200 +1.5%\n"
+    f"━━━━━━━━━━━━━━━━\n"
+    f"🎯 *SL/TP din chart:*\n"
     f"  • SL = peste rezistență / sub support\n"
-    f"  • TP1 = primul nivel | TP2 = al doilea\n"
+    f"  • TP-uri distanțate la niveluri reale\n"
     f"━━━━━━━━━━━━━━━━\n"
     f"🚦 *Filtre stricte:*\n"
-    f"  • R/R minim 1:1.2\n"
-    f"  • Risc maxim 2%\n"
-    f"  • *Max {MAX_SIGNALS_PER_DAY} semnale/zi*\n"
+    f"  • R/R minim 1:1.2 | Risc max 2%\n"
+    f"  • Max {MAX_SIGNALS_PER_DAY} semnale/zi\n"
     f"  • Anti-duplicat 3 ore\n"
     f"━━━━━━━━━━━━━━━━\n"
     f"• Monede: {', '.join(SYMBOLS)}\n"
@@ -318,7 +407,6 @@ send_telegram(
 )
 scan()
 schedule.every(15).minutes.do(scan)
-# Reset contor la miezul nopții
 schedule.every().day.at("00:00").do(reset_daily_count)
 print("Running...")
 while True:
