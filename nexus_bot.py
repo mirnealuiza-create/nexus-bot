@@ -6,7 +6,19 @@ import os
 
 TELEGRAM_BOT_TOKEN = os.environ.get("TELEGRAM_BOT_TOKEN", "")
 TELEGRAM_CHAT_ID = os.environ.get("TELEGRAM_CHAT_ID", "")
-SYMBOLS = ["BTCUSDT", "ETHUSDT", "SOLUSDT", "XRPUSDT", "LTCUSDT", "ADAUSDT"]
+
+# v4.3: 14 monede - majoră, memes, DeFi, Layer 1
+SYMBOLS = [
+    # Originale
+    "BTCUSDT", "ETHUSDT", "SOLUSDT", "XRPUSDT", "LTCUSDT", "ADAUSDT",
+    # Memes
+    "DOGEUSDT", "SHIBUSDT", "PEPEUSDT",
+    # DeFi
+    "UNIUSDT", "AAVEUSDT", "LINKUSDT",
+    # Layer 1 bonus
+    "AVAXUSDT", "DOTUSDT",
+]
+
 INTERVAL = "1h"
 
 last_signals = {}
@@ -97,24 +109,16 @@ def check_trend(closes, ema200):
     
     return "SIDEWAYS"
 
-# ============ NOU v4.2: VALIDARE SUPORT/REZISTENȚĂ PE 10 LUMÂNĂRI ============
 def is_support_valid(support, recent_lows, recent_closes, lookback=10):
-    """
-    Verifică dacă supportul NU a fost spart în ultimele 10 lumânări.
-    Verifică atât low-urile (wicks) cât și close-urile.
-    """
-    # Verifică ultimele 'lookback' low-uri (inclusiv wicks)
     for low in recent_lows[-lookback:]:
-        if low < support * 0.995:  # spart cu 0.5% sau mai mult
+        if low < support * 0.995:
             return False
-    # Verifică close-urile
     for close in recent_closes[-lookback:]:
         if close < support * 0.997:
             return False
     return True
 
 def is_resistance_valid(resistance, recent_highs, recent_closes, lookback=10):
-    """Verifică dacă rezistența NU a fost spartă în ultimele 10 lumânări"""
     for high in recent_highs[-lookback:]:
         if high > resistance * 1.005:
             return False
@@ -123,23 +127,16 @@ def is_resistance_valid(resistance, recent_highs, recent_closes, lookback=10):
             return False
     return True
 
-# ============ NOU v4.2: STRUCTURĂ LOWER LOWS / HIGHER HIGHS ============
 def has_lower_lows(lows, lookback=10):
-    """
-    Verifică dacă structura recentă arată lower lows (downtrend confirmat).
-    Compară minimul ultimelor 5 lumânări cu minimul celor 5 anterioare.
-    """
     if len(lows) < lookback:
         return False
     recent_5 = lows[-5:]
     previous_5 = lows[-lookback:-5]
     min_recent = min(recent_5)
     min_previous = min(previous_5)
-    # Lower low confirmat: minimul recent e cu cel puțin 0.5% sub minimul anterior
     return min_recent < min_previous * 0.995
 
 def has_higher_highs(highs, lookback=10):
-    """Higher highs = uptrend confirmat"""
     if len(highs) < lookback:
         return False
     recent_5 = highs[-5:]
@@ -149,7 +146,6 @@ def has_higher_highs(highs, lookback=10):
     return max_recent > max_previous * 1.005
 
 def get_distanced_tps(price, levels, direction, min_distance_pct=0.005):
-    """Returnează 2 TP-uri cu distanță minimă între ele"""
     if not levels:
         return None, None
     
@@ -193,16 +189,13 @@ def analyze(symbol):
     swing_highs, swing_lows = find_swings(d, lookback=5)
     resistances, supports = find_supports_resistances(swing_highs, swing_lows, price)
     
-    # ============ NOU v4.2: BLOCAJ DISTANȚĂ EMA200 MAI STRICT (1.0%) ============
     distance_ema_pct = (price - ema200) / price * 100
-    block_long = distance_ema_pct < -1.0    # ÎNAINTE: -1.5%
-    block_short = distance_ema_pct > 1.0    # ÎNAINTE: +1.5%
+    block_long = distance_ema_pct < -1.0
+    block_short = distance_ema_pct > 1.0
     
-    # ============ NOU v4.2: STRUCTURĂ LOWER LOWS / HIGHER HIGHS ============
     structure_bearish = has_lower_lows(lows, lookback=10)
     structure_bullish = has_higher_highs(highs, lookback=10)
     
-    # Verifică niveluri apropiate ȘI valide pe 10 lumânări
     near_resistance = None
     near_support = None
     
@@ -223,28 +216,28 @@ def analyze(symbol):
     sig = None
     reasons = []
     
-    # ============ LOGICA SHORT ============
+    # SHORT
     if (near_resistance 
         and rsi > 40 and rsi < 70 
         and trend != "BULLISH" 
         and not block_short
-        and not structure_bullish):  # NOU v4.2: nu SHORT în uptrend confirmat
+        and not structure_bullish):
         sig = "SHORT"
         reasons.append("📉 Sub EMA200" if price < ema200 else "↔️ Sideways la EMA200")
-        reasons.append(f"🚧 Rezistență validă: ${near_resistance:.4f}")
+        reasons.append(f"🚧 Rezistență validă: {fmt(near_resistance)}")
         reasons.append(f"📊 RSI: {rsi:.1f}")
         reasons.append(f"✅ Trend {trend}")
         reasons.append("📉 Structură: Lower Lows" if has_lower_lows(lows) else "↔️ Structură: stabilă")
     
-    # ============ LOGICA LONG ============
+    # LONG
     elif (near_support 
           and rsi < 60 and rsi > 30 
           and trend != "BEARISH" 
           and not block_long
-          and not structure_bearish):  # NOU v4.2: nu LONG în downtrend confirmat
+          and not structure_bearish):
         sig = "LONG"
         reasons.append("📈 Peste EMA200" if price > ema200 else "↔️ Sideways la EMA200")
-        reasons.append(f"🟩 Support valid: ${near_support:.4f}")
+        reasons.append(f"🟩 Support valid: {fmt(near_support)}")
         reasons.append(f"📊 RSI: {rsi:.1f}")
         reasons.append(f"✅ Trend {trend}")
         reasons.append("📈 Structură: Higher Highs" if has_higher_highs(highs) else "↔️ Structură: stabilă")
@@ -261,7 +254,6 @@ def analyze(symbol):
             print(f"duplicat ({diff:.0f} min)")
             return None
     
-    # SL/TP cu TP-uri distanțate
     buffer = price * 0.003
     
     if sig == "SHORT":
@@ -298,10 +290,18 @@ def analyze(symbol):
     
     last_signals[key] = now
     
+    # NOU v4.3: rotunjire mai precisă pentru prețuri mici (PEPE, SHIB)
+    if price < 0.01:
+        precision = 10
+    elif price < 1:
+        precision = 8
+    else:
+        precision = 6
+    
     return {
         "symbol": symbol, "direction": sig, "price": price,
-        "sl": round(sl, 6), "tp1": round(tp1, 6), "tp2": round(tp2, 6),
-        "rsi": round(rsi, 1), "ema200": round(ema200, 4),
+        "sl": round(sl, precision), "tp1": round(tp1, precision), "tp2": round(tp2, precision),
+        "rsi": round(rsi, 1), "ema200": round(ema200, precision),
         "ema_distance": round(distance_ema_pct, 2),
         "risk": risk, "reward": reward, "reward2": reward2,
         "rr": rr, "rr2": rr2,
@@ -310,14 +310,21 @@ def analyze(symbol):
     }
 
 def fmt(p):
+    """Formater pentru prețuri - ajustat pentru memes (PEPE, SHIB) v4.3"""
     if p > 1000:
         return f"${p:,.2f}"
     elif p > 100:
         return f"${p:,.2f}"
     elif p > 1:
         return f"${p:.4f}"
+    elif p > 0.01:
+        return f"${p:.5f}"
+    elif p > 0.0001:
+        return f"${p:.7f}"
+    elif p > 0.000001:
+        return f"${p:.9f}"
     else:
-        return f"${p:.6f}"
+        return f"${p:.11f}"
 
 def send_telegram(msg):
     try:
@@ -383,34 +390,31 @@ def scan():
     
     print(f"  Status: {len(signals_today)}/{MAX_SIGNALS_PER_DAY} semnale azi")
 
+# Mesaj de startup
 send_telegram(
-    f"🤖 *NEXUS Bot v4.2 ACTIV* ✅\n"
+    f"🤖 *NEXUS Bot v4.3 ACTIV* ✅\n"
+    f"━━━━━━━━━━━━━━━━\n"
+    f"🆕 *Listă extinsă - 14 monede:*\n"
+    f"💎 *Top:* BTC, ETH, SOL, XRP, LTC, ADA\n"
+    f"🐶 *Memes:* DOGE, SHIB, PEPE\n"
+    f"🦄 *DeFi:* UNI, AAVE, LINK\n"
+    f"⛰️ *Layer 1:* AVAX, DOT\n"
     f"━━━━━━━━━━━━━━━━\n"
     f"📊 *Logică:*\n"
     f"  • RSI (40-70 SHORT, 30-60 LONG)\n"
-    f"  • Suport/Rezistență validate pe 10h\n"
+    f"  • Suport/Rezistență validate 10h\n"
     f"  • Trend EMA200 + media + momentum\n"
     f"  • Structură Lower Lows/Higher Highs\n"
-    f"━━━━━━━━━━━━━━━━\n"
-    f"🆕 *Fix-uri v4.2:*\n"
-    f"  • Limită EMA200 mai strictă: ±1.0% (era 1.5%)\n"
-    f"  • Validare suport/rezistență pe 10h (era 3h)\n"
-    f"  • Filtru Lower Lows → blochează LONG\n"
-    f"  • Filtru Higher Highs → blochează SHORT\n"
-    f"━━━━━━━━━━━━━━━━\n"
-    f"🎯 *SL/TP din chart:*\n"
-    f"  • SL = peste rezistență / sub support\n"
-    f"  • TP-uri distanțate (min 0.5%)\n"
     f"━━━━━━━━━━━━━━━━\n"
     f"🚦 *Filtre stricte:*\n"
     f"  • R/R minim 1:1.2 | Risc max 2%\n"
     f"  • Max {MAX_SIGNALS_PER_DAY} semnale/zi\n"
     f"  • Anti-duplicat 3 ore\n"
+    f"  • Limită EMA200 ±1.0%\n"
     f"━━━━━━━━━━━━━━━━\n"
-    f"• Monede: {', '.join(SYMBOLS)}\n"
     f"• Timeframe: 1H | Scan: 15min\n"
     f"━━━━━━━━━━━━━━━━\n"
-    f"_Doar setupuri curate. Răbdare._"
+    f"_Mai multe monede, aceleași standarde._"
 )
 scan()
 schedule.every(15).minutes.do(scan)
